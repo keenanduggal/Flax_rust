@@ -1,0 +1,148 @@
+# Libraries: 
+library(mgcv)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(readxl)
+library(stringr)
+library(broom)
+library(raster)
+library(stringr)
+library(ncf) 
+library(sf)
+library(sp)
+library(spdep)
+library(rSDP)
+library(leaflet)
+library(lubridate)
+library(locfit)
+
+# Field Data: 
+data <- read_excel("~/Desktop/2023_data.xlsx", sheet = 1)
+meta_data <- read_excel("~/Desktop/2023_data.xlsx", sheet =2)
+
+
+#Spatial_data: 
+topography <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release1/UER_dem_filled_1m_v2.tif"
+topography <- raster(topography, progress='text')
+
+spatial_correction <- function(df) {
+    coordinates(df) <- ~Longitude+Latitude # creates the SpatialDataframe class in R
+    proj4string(df) <- "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+    raster_p4string <- proj4string(topography)
+    return(spTransform(df,CRS=CRS(raster_p4string)))
+}
+
+# Visualizing: 
+flax_locs <- spatial_correction(meta_data)  
+elevation_UG <- sdp_get_raster(catalog_id="R3D008")
+plot(elevation_UG)
+plot(flax_locs, add = T, pch = 16)
+
+flax_locs$topography <- extract(topography,flax_locs,method="simple")
+
+
+surface_water <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release1/UER_surface_water_1m_v3.tif"
+surface_water <- raster(surface_water, progress='text')
+flax_locs$surface_water <- extract(surface_water,flax_locs,method="simple")
+
+
+landcover <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release1/UER_landcover_1m_v4.tif"
+landcover <- raster(landcover, progress='text')
+flax_locs$landcover <- extract(landcover,flax_locs,method="simple")
+
+summer_radiation <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release2/UER_srad_bareearth_day172_3m_v1.tif"
+summer_radiation <- raster(summer_radiation, progress='text')
+flax_locs$summer_radiation <- extract(summer_radiation,flax_locs,method="simple")
+
+winter_radiation <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release2/UER_srad_bareearth_day355_3m_v1.tif"
+winter_radiation <- raster(winter_radiation, progress='text')
+flax_locs$winter_radiation <- extract(winter_radiation,flax_locs,method="simple")
+
+canopy_height <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release2/UER_canopy_ht_33cm_v2.tif"
+canopy_height <- raster(canopy_height, progress='text')
+flax_locs$canopy_height <- extract(canopy_height,flax_locs,method="simple")
+
+slope_south <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release3/UG_dem_aspect_southness_1m_v1.tif"
+slope_south <- raster(slope_south, progress='text')
+flax_locs$slope_south <- extract(slope_south,flax_locs,method="simple")
+
+slope_north <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release3/UG_dem_aspect_westness_1m_v1.tif"
+slope_north <- raster(slope_north, progress='text')
+flax_locs$slope_north <- extract(slope_north,flax_locs,method="simple")
+
+slope_angle <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release3/UG_dem_slope_1m_v1.tif"
+slope_angle <- raster(slope_angle, progress='text')
+flax_locs$slope_angle <- extract(slope_angle,flax_locs,method="simple")
+
+snow_2019 <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/basemaps/UER_snowdepth_basemap_2019_v3.tif" 
+snow_2019 <- raster(snow_2019, progress='text')
+flax_locs$snow_2019 <- extract(snow_2019,flax_locs,method="simple")
+
+snow_2018 <- "/vsicurl/https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/basemaps/UER_snowdepth_basemap_2018_v3.tif"
+snow_2018 <- raster(snow_2018, progress='text')
+flax_locs$snow_2018 <- extract(snow_2018,flax_locs,method="simple")
+
+
+
+############################ Analyses: 
+
+# Starting Data
+start <- data %>% filter(Date < ymd(20230621)) %>% arrange(Site)
+start$elevation <- meta_data %>% arrange(Site) %>% pull(Elevation)
+adjusted_metadata <- flax_locs %>% as.data.frame()
+start <- merge(start, adjusted_metadata, by = "Site")
+
+
+####### Determinants of overwintering success: 
+
+# elevation: 
+plot(start$elevation, start$num_diseased, pch = 16, main = "Pathogen Overwintering Across Elevation")
+lm(start$num_diseased ~ start$elevation) %>% summary()
+    # Elevation vs topography (test correlation) ### Checks Out well!
+    plot(start$elevation, start$topography)
+
+# Landcover:  
+plot(factor(start$landcover), start$num_diseased, pch = 16, main = "Pathogen Overwintering Across Landcover")
+    
+# summer_rad:  
+plot(start$summer_radiation, start$num_diseased, pch = 16, main = "Pathogen Overwintering")
+
+# winter rad:  (somewhat of a trend, but not significant) 
+plot(start$winter_radiation, start$num_diseased, pch = 16, main = "Pathogen Overwintering")
+lm(start$num_diseased ~ start$winter_radiation) %>% summary()
+
+# canopy_height: (no significant) 
+plot(start$canopy_height, start$num_diseased, pch = 16, main = "Pathogen Overwintering")
+lm(start$num_diseased ~ start$canopy_height) %>% summary()
+
+# slope south: 
+plot(start$slope_south, start$num_diseased, pch = 16, main = "Pathogen Overwintering")
+lm(start$num_diseased ~ start$slope_south) %>% summary()
+
+#slope north: (significant!!!) 
+plot(start$slope_north, start$num_diseased, pch = 16, main = "Pathogen Overwintering")
+lm(start$num_diseased ~ start$slope_north) %>% summary()
+
+#slope north: (significant!!!) 
+plot(start$slope_angle, start$num_diseased, pch = 16, main = "Pathogen Overwintering")
+lm(start$num_diseased ~ start$slope_angle) %>% summary()
+
+# 2019 snow: 
+plot(start$snow_2019, start$num_diseased, pch = 16, main = "Pathogen Overwintering")
+lm(start$num_diseased ~ start$snow_2019) %>% summary()
+
+# 2018 snow: 
+plot(start$snow_2018, start$num_diseased, pch = 16, main = "Pathogen Overwintering")
+lm(start$num_diseased ~ start$snow_2018) %>% summary()
+        
+    # Correlation between 2018 and 2019 snow: 
+    plot(start$snow_2018, start$snow_2019, xlim = c(150, 260), ylim = c(150, 260))
+    lm(start$snow_2018 ~ start$snow_2019) %>% summary()
+
+### Net Models: 
+model <- gam(data = start, num_diseased ~ s(elevation, k = 2) + s(snow_2019, k = 2) + s(winter_radiation, k = 2))
+plot(model) 
+
+model2 <- gam(data = start, num_diseased ~ s(slope_angle, k = 2) + s(slope_north, k = 2) + s(slope_south, k = 2))
+plot(model2) 
