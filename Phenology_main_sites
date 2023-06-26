@@ -1,0 +1,379 @@
+# Libraries: 
+library(mgcv)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(readxl)
+library(stringr)
+library(broom)
+dev.new(width=6, height=6)
+
+# Snow Data: https://www.gothicwx.org/ground-cover.html
+phenology_data <- read_excel("~/Desktop/Plant_pathogen_work/RMBL_Winter_Data.xlsx")
+    # Disregard the 2022 dates (autoformatted by excel) 
+phenology_data$jan1st <- as.Date(paste(phenology_data$year, 1, 1, sep = "-"))
+
+# Length of Snow Cover over time: 
+ggplot(phenology_data,aes(x=jan1st, y=`ground covered`)) +
+    geom_point() + 
+    xlab("Year") + 
+    ylab("Total Days with Snow-cover") + 
+    geom_smooth(method = 'lm') + 
+    labs(title=str_wrap("Days With Snow Cover Over the Last Half-Century", 25)) + 
+    theme(text = element_text(size = 18))      
+
+
+
+first_day_spring <- as.Date('2022/04/20', '%Y/%m/%d')
+phenology_data$days_since<- difftime(phenology_data$`bare ground`, first_day_spring , units = c("days"))
+
+
+ggplot(phenology_data,aes(x=jan1st, y=days_since)) +
+    geom_point() + 
+    xlab("Year") + 
+    ylab("Days with Snow in Spring") + 
+    geom_smooth(method = 'lm') + 
+    labs(title=str_wrap("Days With Snow in Spring Over the Last Half-Century", 30)) + 
+    theme(text = element_text(size = 18))      
+
+
+
+# https://www.gothicwx.org/daily-high-temp--freezing.html
+consecutive_freezing_days <- read_excel("~/Desktop/Plant_pathogen_work/Consecutive_days.xlsx")
+consecutive_freezing_days$Year <- as.numeric(substr(consecutive_freezing_days$Winter, 1, 4)) + 1
+consecutive_freezing_days$Date <- as.Date(paste(as.numeric(substr(consecutive_freezing_days$Winter, 1, 4)) + 1, 1, 1, sep = "-"))
+ggplot(consecutive_freezing_days,aes(x=Date, y=Consecutive_Days)) +
+    geom_point() + 
+    xlab("Year") + 
+    ylab("Consecutive Days Below 0°C") + 
+    geom_smooth(method = 'lm') + 
+    labs(title=str_wrap("Consecutive Days below 0°C in Past Half-Century", 35))+ 
+    theme(text = element_text(size = 18))      
+
+
+
+# Flax Data: 
+demography_data_raw <- read_excel("~/Desktop/Plant_pathogen_work/Demography.xlsx")
+demography_data <- demography_data_raw %>% select(Site, year, final.status) %>% na.omit() %>% filter(final.status %in% c('D', 'H'))
+demography_data$Site <- factor(demography_data$Site)
+demography_data$year <- factor(demography_data$year)
+demography_data$final.status <- factor(demography_data$final.status)
+demography_data$Diseased <- (demography_data$final.status == 'D') + 0 
+
+demography_data <- demography_data %>% filter(year %in% c(2019, 2020, 2021)) %>% group_by(Site, year) %>% filter(Site %in% c("CC", "BT", "GM", "HM"))
+summarized_data <- demography_data %>% summarize(proportion = mean(Diseased), number = n()) 
+summarized_data <- summarized_data %>% mutate(snow_days =
+                       case_when(year==2018 ~ phenology_data %>% filter(year == 2018) %>% pull(`ground covered`), 
+                                 year==2019 ~ phenology_data %>% filter(year == 2019) %>% pull(`ground covered`),
+                                 year==2020 ~ phenology_data %>% filter(year == 2020) %>% pull(`ground covered`))
+)
+summarized_data <- summarized_data %>% mutate(consecutive =
+                                                  case_when(year==2018 ~ consecutive_freezing_days %>% filter(Year == 2018) %>% pull(Consecutive_Days), 
+                                                            year==2019 ~ consecutive_freezing_days %>% filter(Year == 2019) %>% pull(Consecutive_Days),
+                                                            year==2020 ~ consecutive_freezing_days %>% filter(Year == 2020) %>% pull(Consecutive_Days))
+)
+
+summarized_data <- summarized_data %>% mutate(days_since =
+                                                  case_when(year==2018 ~ phenology_data %>% filter(year == 2018) %>% pull(days_since), 
+                                                            year==2019 ~ phenology_data %>% filter(year == 2019) %>% pull(days_since),
+                                                            year==2020 ~ phenology_data %>% filter(year == 2020) %>% pull(days_since))
+)
+
+ggplot(data = summarized_data, aes(x= snow_days, y = proportion, color = Site)) + 
+    geom_point() + 
+    geom_smooth(method = "lm", se=F) + 
+    xlab("Days with Snow Cover") + 
+    ylab("Proportion of Diseased Plants in Transect") + 
+    labs(title=str_wrap("Maximum Epidemic Intensity ~ Snow Cover Duration",30)) + 
+    theme(text = element_text(size = 18))      
+
+
+ggplot(data = summarized_data, aes(x= consecutive, y = proportion, color = Site)) + 
+    geom_point() + 
+    geom_smooth(method = "lm", se = F) + 
+    xlab("Consecutive Days Below 0°C") + 
+    ylab("Proportion of Diseased Plants in Transect") + 
+    labs(title=str_wrap("Maximum Epidemic Intensity ~ Days Below Freezing",30)) + 
+    theme(text = element_text(size = 18))      
+
+ggplot(data = summarized_data, aes(x= days_since, y = proportion, color = Site)) + 
+    geom_point() + 
+    geom_smooth(method = "lm", se = F) + 
+    xlab("Days of Snow Cover in Spring") + 
+    ylab("Proportion of Diseased Plants in Transect") + 
+    labs(title=str_wrap("Maximum Epidemic Intensity ~ Days of Spring Snow Cover",30)) + 
+    theme(text = element_text(size = 18))      
+
+
+
+significance <- t.test(demography_data %>% filter(Site == "HM", year == '2019') %>% pull(Diseased), demography_data %>% filter(Site == "HM", year == '2020') %>% pull(Diseased))
+cat("Format:'HM 2019, HM 2020, p value'", significance$estimate,  significance$p.value)
+
+
+
+# opposite of explanation I would expect: 
+' low sample size could confound relationship or could be that plants get more stressed with longer winters --> greater '
+
+
+
+
+
+ #####################################################################
+library(lubridate)
+epi_data<- read_excel("~/Desktop/Plant_pathogen_work/Epidemiology.xlsx")
+epi_data$Disease_date <- epi_data$`Date First Observed Diseased`
+
+
+# Total num plants 
+plant_locs <- read_excel("~/Desktop/Plant_pathogen_work/Plant locations.xlsx")
+plant_locs %>% filter(Site == "BT") %>% group_by(Year) %>% summarize(n = n())
+plant_locs %>% filter(Site == "CC") %>% group_by(Year) %>% summarize(n = n())
+plant_locs %>% filter(Site == "HM") %>% group_by(Year) %>% summarize(n = n())
+plant_locs %>% filter(Site == "GM") %>% group_by(Year) %>% summarize(n = n())
+
+#Looking at the above data, seems that 2020 is the best measurement 
+final_nums <-plant_locs %>% filter(Year == 2020) %>% filter(Site %in% c("BT", "CC", "GM", "HM")) %>%  group_by(Site) %>% summarize(n = n())
+
+
+## By Transect and Year: 
+plot_bt <- epi_data %>% filter(Site == "BT") %>% group_by(Year, Disease_date) %>% summarize(count = n())
+plot_bt <- plot_bt %>% group_by(Year) %>% mutate(prev = cumsum(count) / final_nums %>% filter(Site == "BT") %>% pull(n))
+plot_bt$dates <- plot_bt$Disease_date %>%  str_replace_all("2020", "2000") %>% str_replace_all("2019", "2000") %>% str_replace_all("2021", "2000") %>% ymd()
+plot_bt$Year <- plot_bt$Year %>% factor()
+plot_bt$Site <- rep("BT", nrow(plot_bt))
+
+plot_cc <- epi_data %>% filter(Site == "CC") %>% group_by(Year, Disease_date) %>% summarize(count = n())
+plot_cc <- plot_cc %>% group_by(Year) %>% mutate(prev = cumsum(count) / final_nums %>% filter(Site == "CC") %>% pull(n))
+plot_cc$dates <- plot_cc$Disease_date %>%  str_replace_all("2020", "2000") %>% str_replace_all("2019", "2000") %>% str_replace_all("2021", "2000") %>% ymd()
+plot_cc$Year <- plot_cc$Year %>% factor()
+plot_cc$Site <- rep("CC", nrow(plot_cc))
+
+plot_gm <- epi_data %>% filter(Site == "GM") %>% group_by(Year, Disease_date) %>% summarize(count = n())
+plot_gm <- plot_gm %>% group_by(Year) %>% mutate(prev = cumsum(count) / final_nums %>% filter(Site == "GM") %>% pull(n))
+plot_gm$dates <- plot_gm$Disease_date %>%  str_replace_all("2020", "2000") %>% str_replace_all("2019", "2000") %>% str_replace_all("2021", "2000") %>% ymd()
+plot_gm$Year <- plot_gm$Year %>% factor()
+plot_gm$Site <- rep("GM", nrow(plot_gm))
+
+plot_hm <- epi_data %>% filter(Site == "HM") %>% group_by(Year, Disease_date) %>% summarize(count = n())
+plot_hm <- plot_hm %>% group_by(Year) %>% mutate(prev = cumsum(count) / final_nums %>% filter(Site == "HM") %>% pull(n))
+plot_hm$dates <- plot_hm$Disease_date %>%  str_replace_all("2020", "2000") %>% str_replace_all("2019", "2000") %>% str_replace_all("2021", "2000") %>% ymd()
+plot_hm$Year <- plot_hm$Year %>% factor()
+plot_hm$Site <- rep("HM", nrow(plot_hm))
+
+temp <- merge(x = plot_bt, y = plot_cc, all = T) 
+temp1 <- merge(x = temp, y = plot_gm, all = T) 
+plot_final <- merge(x = temp1, y = plot_hm, all = T) 
+
+
+# All Sites (3 year aggregate): (weekley new infections) 
+ggplot(data = plot_final, aes(x = dates, y = count, color = Site)) + 
+    geom_point(size = 2, alpha = 0.3) + 
+    scale_colour_brewer(palette="Set1") + 
+    geom_line(stat="smooth",method = "lm", formula = y ~ poly(x, 3),
+              linetype ="dashed",
+              alpha = 1, size = 1) + 
+    ylim(c(0,200)) + 
+    theme_classic(base_size = 14)  + 
+    xlim(c(ymd(20000610), ymd(20000831))) + 
+    labs(y = "Weekly New Infections", x = "Date", title = "Rate of Epidemic Progression Over Time")  + 
+    theme(legend.position= 'top', 
+          legend.justification='left',
+          legend.direction='horizontal', 
+          axis.text=element_text(size=12),
+          axis.title=element_text(size=15), 
+          plot.title = element_text(size = 20, face="bold"), 
+          legend.title=element_blank())
+
+
+# All Sites: Prevalence 
+ggplot(data = plot_final, aes(x = dates, y = prev, color = Site)) + 
+    geom_point(size = 2, alpha = 0.3) + 
+    scale_colour_brewer(palette="Set1") + 
+    geom_line(stat="smooth",method = "lm", formula = y ~ poly(x, 3),
+              linetype ="dashed",
+              alpha = 1, size = 1) + 
+    theme_classic(base_size = 14)  + 
+    xlim(c(ymd(20000610), ymd(20000831))) + 
+    labs(y = "Prevalence", x = "Date", title = "Epidemic Progression Over Time")  + 
+    theme(legend.position= 'top', 
+          legend.justification='left',
+          legend.direction='horizontal', 
+          axis.text=element_text(size=12),
+          axis.title=element_text(size=15), 
+          plot.title = element_text(size = 20, face="bold"), 
+          legend.title=element_blank())
+
+
+
+
+# Regression Anslysis 
+df = plot_bt %>% filter(Year == 2021)
+df$days <- difftime(df$dates ,ymd(20000601) ,units = "days") %>% as.numeric()
+plot(gam(data = df, prev ~ s(days, k = 1)))
+lm(data = df, formula= prev ~ poly(days,2)) %>% summary()
+
+
+
+
+## Each individual Site: 
+a <- ggplot(data = plot_bt, aes(x = dates, y = prev, color = Year)) + 
+    geom_line() + 
+    scale_colour_brewer(palette="Set1") + 
+    theme_classic(base_size = 14)  + 
+    xlim(c(ymd(20000610), ymd(20000831))) + 
+    labs(y = "Prevalence", x = "Date", title = "BT Epidemic Progression")  + 
+    theme(legend.position= 'top', 
+          legend.justification='left',
+          legend.direction='horizontal', 
+          axis.text=element_text(size=12),
+          axis.title=element_text(size=15), 
+          plot.title = element_text(size = 20, face="bold"), 
+          legend.title=element_blank())
+
+b <- ggplot(data = plot_cc, aes(x = dates, y = prev, color = Year)) + 
+    geom_line() + 
+    scale_colour_brewer(palette="Set1") + 
+    theme_classic(base_size = 14)  + 
+    xlim(c(ymd(20000610), ymd(20000831))) + 
+    labs(y = "Prevalence", x = "Date", title = "CC Epidemic Progression")  + 
+    theme(legend.position= 'top', 
+          legend.justification='left',
+          legend.direction='horizontal', 
+          axis.text=element_text(size=12),
+          axis.title=element_text(size=15), 
+          plot.title = element_text(size = 20, face="bold"), 
+          legend.title=element_blank())
+
+c <- ggplot(data = plot_gm, aes(x = dates, y = prev, color = Year)) + 
+    geom_line() + 
+    scale_colour_brewer(palette="Set1") + 
+    theme_classic(base_size = 14)  + 
+    xlim(c(ymd(20000610), ymd(20000831))) + 
+    labs(y = "Prevalence", x = "Date", title = "GM Epidemic Progression")  + 
+    theme(legend.position= 'top', 
+          legend.justification='left',
+          legend.direction='horizontal', 
+          axis.text=element_text(size=12),
+          axis.title=element_text(size=15), 
+          plot.title = element_text(size = 20, face="bold"), 
+          legend.title=element_blank())
+
+d <- ggplot(data = plot_hm, aes(x = dates, y = prev, color = Year)) + 
+    geom_line() + 
+    scale_colour_brewer(palette="Set1") + 
+    theme_classic(base_size = 14)  + 
+    xlim(c(ymd(20000610), ymd(20000831))) + 
+    labs(y = "Prevalence", x = "Date", title = "HM Epidemic Progression")  + 
+    theme(legend.position= 'top', 
+          legend.justification='left',
+          legend.direction='horizontal', 
+          axis.text=element_text(size=12),
+          axis.title=element_text(size=15), 
+          plot.title = element_text(size = 20, face="bold"), 
+          legend.title=element_blank())
+
+library(ggpubr)
+dev.new()
+ggarrange(a, b, c, d, ncol = 2, nrow = 2, labels = c("A", "B", "C", "D"))
+
+
+
+
+#  Thesis Analysis: (Weekly New Infections) 
+
+### 2021 analysis: 
+epi_data[order(epi_data$`Date First Observed Diseased`),] %>% filter(Year == 2021) %>% select(`Date First Observed Diseased`) %>% unique() 
+epi_2021 <- epi_data[order(epi_data$`Date First Observed Diseased`),] %>% filter(Year == 2021)
+# Newly diseased plants in each week: 
+week1 <- epi_2021 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20210615), ymd(20210616), ymd(20210617))) 
+week2 <- epi_2021 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20210622), ymd(20210624))) 
+week3 <- epi_2021 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20210628), ymd(20210629))) 
+week4 <- epi_2021 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20210705), ymd(20210706))) 
+week5 <- epi_2021 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20210712), ymd(20210715))) 
+week6 <- epi_2021 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20210719), ymd(20210720))) 
+week7 <- epi_2021 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20210726), ymd(20210727))) 
+season_2021 <- data.frame(number_of_new_infections = c(length(week1$Tag), length(week2$Tag), length(week3$Tag), length(week4$Tag), length(week5$Tag), length(week6$Tag), length(week7$Tag)), Week_of = c(ymd(week1$`Date First Observed Diseased`[1]), ymd(week2$`Date First Observed Diseased`[1]), ymd(week3$`Date First Observed Diseased`[1]),
+ymd(week4$`Date First Observed Diseased`[1]), ymd(week5$`Date First Observed Diseased`[1]), ymd(week6$`Date First Observed Diseased`[1]), ymd(week7$`Date First Observed Diseased`[1])))
+season_2021$id = rep(2021,nrow(season_2021))
+
+### 2020 analysis: 
+epi_data[order(epi_data$`Date First Observed Diseased`),] %>% filter(Year == 2020) %>% select(`Date First Observed Diseased`) %>% unique() 
+epi_2020 <- epi_data[order(epi_data$`Date First Observed Diseased`),] %>% filter(Year == 2020)
+# Newly diseased plants in each week: 
+week1 <- epi_2020 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20200615), ymd(20200616), ymd(20200617), ymd(20200617))) 
+week2 <- epi_2020 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20200622), ymd(20200623), ymd(20200624), ymd(20200625))) 
+week3 <- epi_2020 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20200629), ymd(20200630), ymd(20200701), ymd(20200702))) 
+week4 <- epi_2020 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20200706), ymd(20200707), ymd(20200708), ymd(20200709))) 
+week5 <- epi_2020 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20200713), ymd(20200715), ymd(20200716))) 
+week6 <- epi_2020 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20200720), ymd(20200721), ymd(20200722))) 
+week7 <- epi_2020 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20200727), ymd(20200728), ymd(20200729))) 
+season_2020 <- data.frame(number_of_new_infections = c(length(week1$Tag), length(week2$Tag), length(week3$Tag), length(week4$Tag), length(week5$Tag), length(week6$Tag), length(week7$Tag)), Week_of = c(ymd(week1$`Date First Observed Diseased`[1]), ymd(week2$`Date First Observed Diseased`[1]), ymd(week3$`Date First Observed Diseased`[1]),
+           ymd(week4$`Date First Observed Diseased`[1]), ymd(week5$`Date First Observed Diseased`[1]), ymd(week6$`Date First Observed Diseased`[1]), ymd(week7$`Date First Observed Diseased`[1])))
+season_2020$id = rep(2020,nrow(season_2020))
+
+### 2019 analysis: 
+epi_data[order(epi_data$`Date First Observed Diseased`),] %>% filter(Year == 2019) %>% select(`Date First Observed Diseased`) %>% unique() 
+epi_2019 <- epi_data[order(epi_data$`Date First Observed Diseased`),] %>% filter(Year == 2019)
+# Newly diseased plants in each week: 
+week1 <- epi_2019 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20190620), ymd(20190621))) 
+week2 <- epi_2019 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20190624), ymd(20190627))) 
+week3 <- epi_2019 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20190702), ymd(20190703))) 
+week4 <- epi_2019 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20190708), ymd(20190709), ymd(20190710))) 
+week5 <- epi_2019 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20190716), ymd(20190717), ymd(20190719))) 
+week6 <- epi_2019 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20190722), ymd(20190723), ymd(20190724))) 
+week7 <- epi_2019 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20190730), ymd(20190731), ymd(20190802))) 
+week8 <- epi_2019 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20190805), ymd(20190806), ymd(20190807))) 
+week9 <- epi_2019 %>% filter(ymd(`Date First Observed Diseased`) %in% c(ymd(20190828), ymd(20190829), ymd(20190830))) 
+season_2019 <- data.frame(number_of_new_infections = c(length(week1$Tag), length(week2$Tag), length(week3$Tag), length(week4$Tag), length(week5$Tag), length(week6$Tag), length(week7$Tag), length(week8$Tag), length(week9$Tag)), Week_of = c(ymd(week1$`Date First Observed Diseased`[1]), ymd(week2$`Date First Observed Diseased`[1]), ymd(week3$`Date First Observed Diseased`[1]), ymd(week4$`Date First Observed Diseased`[1]), ymd(week5$`Date First Observed Diseased`[1]), ymd(week6$`Date First Observed Diseased`[1]), ymd(week7$`Date First Observed Diseased`[1]), ymd(week8$`Date First Observed Diseased`[1]), ymd(week9$`Date First Observed Diseased`[1])))
+season_2019$id = rep(2019,nrow(season_2019))
+
+temp <- merge(x = season_2019, y = season_2020, all = T) 
+final <- merge(x = temp, y = season_2021, all = T) 
+library(stringr)
+final$dates <- final$Week_of %>%  str_replace_all("2020", "2000") %>% str_replace_all("2019", "2000") %>% str_replace_all("2021", "2000")
+total_observations <- epi_data %>% filter(Year %in% c(2019, 2020, 2021)) %>% nrow()
+
+dev.new()
+ggplot(data = final, aes(x = ymd(dates), y = number_of_new_infections, color = factor(id))) + 
+    geom_point(size = 2, alpha = 1) + 
+    scale_colour_brewer(palette="Set1") + 
+    geom_line(stat="smooth",method = "lm", formula = y ~ poly(x, 3),
+              linetype ="dashed",
+              alpha = 0.5, size = 1) + 
+    ylim(c(0,250)) + 
+    theme_classic(base_size = 14)  + 
+    xlim(c(ymd(20000610), ymd(20000831))) + 
+    labs(y = "Weekly New Infections", x = "Date", title = "Rate of Epidemic Progression Over Time")  + 
+    theme(legend.position= 'top', 
+          legend.justification='left',
+          legend.direction='horizontal', 
+          axis.text=element_text(size=12),
+          axis.title=element_text(size=15), 
+          plot.title = element_text(size = 20, face="bold"), 
+          legend.title=element_blank())
+    
+    
+
+
+
+ggplot(data = season_2021, aes(x = Week_of, y = number_of_new_infections)) + 
+    geom_point() + 
+    geom_smooth(se = F, method = 'lm', formula = y ~ poly(x, 4))
+
+
+ggplot(data = season_2020, aes(x = Week_of, y = number_of_new_infections)) + 
+    geom_point() + 
+    geom_smooth(se = F, method = 'lm', formula = y ~ poly(x, 3))
+
+ggplot(data = season_2019, aes(x = Week_of, y = number_of_new_infections)) + 
+    geom_point() + 
+    geom_smooth(se = F, method = 'lm', formula = y ~ poly(x, 2))
+
+
+
+# Base R 
+plot(x = season_2021$Week_of, y = season_2021$number_of_new_infections)
+reg_2021 <- lm(number_of_new_infections ~ poly(as.numeric(Week_of), 4), data = season_2021)
+lines(sort(season_2021$Week_of),fitted(reg_2021)[order(season_2021$Week_of)], col = "red", type = "l")
+
+
