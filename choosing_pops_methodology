@@ -1,0 +1,67 @@
+library(raster)
+library(mgcv)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(ncf) 
+library(sf)
+library(sp)
+library(spdep)
+library(rSDP)
+library(leaflet)
+
+elevation_UER <- sdp_get_raster(catalog_id="R1D021")
+elevation_UG <- sdp_get_raster(catalog_id="R3D008")
+
+flax_pops <- read.csv("~/Desktop/Spatial Datasets/landscape_transects.csv")
+flax_pops$transect <- as.factor(flax_pops$transect)
+flax_pops <- flax_pops %>% dplyr::select(transect, start.long, start.lat, num.H, num.D, incidence) 
+flax_pops <- flax_pops %>% dplyr::select(transect, end.long, end.lat, num.H, num.D, incidence) 
+flax_pops$subpop.incidence <- as.integer(flax_pops$num.D > 0)
+flax_pops$subpop.prevalence <- (flax_pops$num.D / (flax_pops$num.D + flax_pops$num.H))
+flax_pops <- flax_pops %>% rename(Longitude = start.long, Latitude = start.lat)
+flax_pops <- flax_pops %>% rename(Longitude = end.long, Latitude = end.lat)
+
+
+topography_raw <- "https://rmbl-sdp.s3.us-east-2.amazonaws.com/data_products/released/release1/UER_dem_filled_1m_v2.tif"
+topography_adjusted <- paste("/vsicurl/",topography_raw,sep="")
+topography <- raster(topography_adjusted, progress='text')
+
+spatial_correction <- function(df) {
+    coordinates(df) <- ~Longitude+Latitude # creates the SpatialDataframe class in R
+    proj4string(df) <- "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+    raster_p4string <- proj4string(topography)
+    return(spTransform(df,CRS=CRS(raster_p4string)))
+}
+
+df <- spatial_correction(flax_pops)
+plot(elevation_UG)
+plot(df, pch = 16, add = T)
+
+flax_pops$elevation <- extract(topography,df,method="simple")
+suitable <- flax_pops %>% filter(num.D + num.H > 10) %>% filter(incidence > 0) 
+
+
+na.omit(flax_pops$elevation) %>% quantile(probs = c(0.10, 0.25, 0.6, 0.85))
+
+high_elevation <- suitable %>% filter(elevation > 3350) 
+primary_high <- high_elevation %>% select(transect, Latitude, Longitude, num.H, incidence, elevation) %>% slice(1, 6,7)
+flax_pops %>% filter(elevation> 3350)
+
+
+mid_elevation <- suitable %>% filter(elevation> 2900) %>% filter(elevation < 3200) 
+primary_mid <- mid_elevation %>% select(transect, Latitude, Longitude, num.H, incidence, elevation) %>% slice(5,6,11)
+secondary_mid <- mid_elevation %>% select(transect, Latitude, Longitude, num.H, incidence, elevation) %>% slice(9)
+mid_elevation %>% filter(transect == "VB")
+
+
+low_elevation <- suitable %>% filter(elevation < 2765) 
+primary_low <- low_elevation %>% select(transect, Latitude, Longitude, num.H, incidence, elevation) %>% slice(1,2,4)
+secondary_low <- low_elevation %>% select(transect, Latitude, Longitude, num.H, incidence, elevation) %>% slice(6, 8)
+
+plot(elevation_UER)
+plot(spatial_correction(high_elevation), add = T)
+plot(spatial_correction(mid_elevation), add = T)
+plot(spatial_correction(chosen), add = T)
+
+
